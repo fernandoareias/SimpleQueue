@@ -1,11 +1,22 @@
-using ConsensusModule.Enums;
-using ConsensusModule.Interfaces;
+using ConsensusModule.Enums; 
 
 namespace ConsensusModule.States;
 
-public class LeaderState : ILeaderState
+public class LeaderState : State
 {
-    public ERaftState GetCurrentState()
+    private Raft _context;
+
+    public LeaderState(Raft context)
+    {
+        _context = context;
+    }
+
+    public override void StartElectionTimer()
+    {
+        throw new NotImplementedException();
+    }
+
+    public override void StartElection()
     {
         throw new NotImplementedException();
     }

@@ -1,10 +1,4 @@
-﻿using System;
-using System.Threading;
-using System.Timers;
-using ConsensusModule.Commands.Common;
-using ConsensusModule.Interfaces;
-using ConsensusModule.Logs;
-using ConsensusModule.Sockets;
+﻿using ConsensusModule.Sockets;
 using ConsensusModule.States;
 
 namespace ConsensusModule
@@ -12,8 +6,8 @@ namespace ConsensusModule
     public class Raft
     {
         private ManualResetEvent _exitEvent = new ManualResetEvent(false);
-        private System.Timers.Timer _electionTimer;
-        private SocketClient _socketClient;
+      
+        public readonly SocketClient SocketClient;
         public Raft(int nodeId, int port, string nodeUri, string[]? nodes = null)
         {
             NodeId = nodeId;
@@ -21,86 +15,75 @@ namespace ConsensusModule
             CurrentTerm = 0;
             NodeUri = nodeUri;
             Nodes = nodes;
-            _socketClient = new SocketClient(nodeId);
+            SocketClient = new SocketClient(nodeId, this);
             Port = port;
             
-            CurrentState = FollowerState;
+            State = new FollowerState(this);
             
-            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{CurrentState.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - Iniciando raft node na porta {Port}...");
-            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{CurrentState.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - Nodes informados {string.Join(", ", nodes.Select(node => node))}");
-            StartElectionTimer();
-    
+            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{State.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - Iniciando raft node na porta {Port}...");
+            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{State.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - Nodes informados {string.Join(", ", nodes.Select(node => node))}");
+            State.StartElectionTimer();
         }
+        public State State { get; private set; } 
         
-        public IFollowerState FollowerState { get; private set; } = new FollowerState();
-        public ICandidateState CandidateState { get; private set; } = new CandidateState();
-        public ILeaderState LeaderState { get; private set; } = new LeaderState();
-        public IRaftStates CurrentState { get; private set; } 
-        
-        private int NodeId { get; set; }
+        public int NodeId { get; private set; }
         private string NodeName { get; set; }
-        private int CurrentTerm { get; set; }
+        public int CurrentTerm { get; private set; }
+        public int LogIndex { get; private set; } = 0;
         private string NodeUri { get; set; }
         private string? LeaderUri { get; set; }
         private DateTime? LastLeaderPing { get; set; }
         
         private int Port { get; set; }
-        private string[] Nodes { get; set; }
+        public string[] Nodes { get; set; }
 
-        public void Exit()
-        {
-            _exitEvent.Set();
-            _electionTimer?.Stop();
-        }
-
+        #region Server
         public void StartServer()
         {
-            _socketClient.Server("127.0.0.1", Port).GetAwaiter();
+            SocketClient.Server("127.0.0.1", Port).GetAwaiter();
             _exitEvent.WaitOne();
-            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{CurrentState.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - Raft node encerrado.");
+            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{State.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - Raft node encerrado.");
         }
-
-        private void StartElectionTimer()
-        {
-            if (CurrentState == CandidateState)
-                CurrentState = FollowerState;
             
-            Random random = new Random();
-            double timeout = random.Next(1500, 3001);
+        public void Exit()
+        {
+            _exitEvent.Set(); 
+        }
+        #endregion
 
-            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{CurrentState.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - Iniciando a próxima eleição em {timeout}ms ...");
-
-            _electionTimer = new System.Timers.Timer(timeout);
-            _electionTimer.Elapsed += StartElection;
-            _electionTimer.AutoReset = false; 
-            _electionTimer.Start();
+        #region  ChangeStates
+        
+        private void TransitionTo(State state)
+        {
+            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{State.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - Trocando estado de {State.GetType().Name} para {state.GetType().Name}");
+            this.State = state;
+            this.State.SetContext(this);
+            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{State.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - Estado trocado para {state.GetType().Name}");
         }
         
-        private void StartElection(Object source, ElapsedEventArgs e)
+        public void Follower()
         {
-            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{CurrentState.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - Iniciando a eleição.");
-            if (Nodes.Length == 0)
-            {
-                Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{CurrentState.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - Nenhum nó foi registrado, solicitando lideranca...");
-                ChangeState(LeaderState);
-                return;
-            }
-
-            foreach (var node in Nodes)
-            {
-                var n = node.Split(":");
-                Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{CurrentState.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - Enviando mensagem para o node {node} ");
-                var response = _socketClient.Send($"{(int)ECommandType.REQUEST_VOTE}", n[0], int.Parse(n[1])).GetAwaiter();
-                Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{CurrentState.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - {node} respondeu {response}");
-            }
+            TransitionTo(new FollowerState(this));
+        }
+        
+        public void Leader()
+        {
+            TransitionTo(new LeaderState(this));
         }
 
-        private void ChangeState(IRaftStates state)
+        public void Candidate()
         {
-            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{CurrentState.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - Trocando estado de {CurrentState.GetType().Name} para {state.GetType().Name}");
-            CurrentState = state;
-            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{CurrentState.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - Trocou o estado de {CurrentState.GetType().Name} para {state.GetType().Name}");
+            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {NodeId}][{State.GetType().Name}][TERMO {CurrentTerm}][LOG INDEX - {0}] - Temporizador de eleição expirou. Transitando para Candidato.");
+
+            TransitionTo(new CandidateState(this));
         }
 
+        #endregion
+
+
+        public void AddTerm()
+        {
+            CurrentTerm += 1;
+        }
     }
 }

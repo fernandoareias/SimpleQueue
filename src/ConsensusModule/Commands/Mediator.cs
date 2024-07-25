@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using ConsensusModule;
 using ConsensusModule.Commands;
 using ConsensusModule.Commands.Common;
 using ConsensusModule.Commands.Common.Interfaces;
@@ -10,9 +11,10 @@ using ConsensusModule.Commands.Views;
 public class Mediator
 {
     private readonly Dictionary<Type, Type> _handlers = new Dictionary<Type, Type>();
-
-    public Mediator()
+    private Raft _context;
+    public Mediator(Raft raft)
     {
+        _context = raft;
         Register<RequestVoteCommand, RequestVoteCommandView>(typeof(RequestVoteCommandHandler));
     }
 
@@ -28,7 +30,7 @@ public class Mediator
         if (method == null)
             throw new InvalidOperationException($"No method handler registered for {handlerType}");
         
-        return await (Task<View>)method.Invoke(handlerInstance, new object[] { command });
+        return await (Task<View>)method.Invoke(handlerInstance, new object[] { command, _context });
     }
 
     public void Register<TCommand, TView>(Type handler)

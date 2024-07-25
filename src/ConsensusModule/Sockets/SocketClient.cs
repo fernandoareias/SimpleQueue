@@ -11,10 +11,10 @@ public  class SocketClient
 {
     private readonly int _processId;
     private readonly Mediator _mediator;
-    public SocketClient(int processId)
+    public SocketClient(int processId, Raft context)
     {
         _processId = processId;
-        _mediator = new Mediator();
+        _mediator = new Mediator(context);
     }
     public async Task<string?> Send(string message, string serverIp, int port)
     {
@@ -26,11 +26,12 @@ public  class SocketClient
             Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {_processId}][SOCKET CLIENT] - Conectado ao servidor...");
             clientSocket.Connect(endPoint);
             
-            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {_processId}][SOCKET CLIENT] - Enviando {message}");
+            
 
             string messageToSend = message + " <*>";
             byte[] dataToSend = Encoding.ASCII.GetBytes(messageToSend);
-
+            
+            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {_processId}][SOCKET CLIENT] - Enviando {message} | {dataToSend.Length} bytes");
             clientSocket.Send(dataToSend);
 
 
@@ -38,14 +39,13 @@ public  class SocketClient
             int bytesRead = clientSocket.Receive(buffer);
             string response = Encoding.ASCII.GetString(buffer, 0, bytesRead);
 
-            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {_processId}][SOCKET CLIENT] - Recebendo {response}");
-
+            Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {_processId}][SOCKET CLIENT] - Recebendo {response} | {bytesRead} bytes");
             return response;
         }
         catch (Exception e)
         {
             Console.WriteLine($"[-][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {_processId}][SOCKET CLIENT][EXCEPTION] - {e.Message}");
-            return null;
+            return string.Empty;
         }
         finally
         {
@@ -109,10 +109,12 @@ public  class SocketClient
                 if (receivedString.IndexOf(eom) > -1)
                 {
                     receivedString = receivedString.Replace(eom, "").Trim();
-                    Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {_processId}][SOCKET SERVER] - Servidor recebeu: \"{receivedString}\"");
                     
-                    var commandType = (ECommandType)int.Parse(receivedString);
-                    var command = CommandFactory.Create(commandType);
+                    Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {_processId}][SOCKET SERVER] - Servidor recebeu: \"{receivedString}\"");
+ 
+                    var commandType = (ECommandType)int.Parse(receivedString.Substring(0, 4).Replace(";", "").Trim());
+                    Console.WriteLine($"[+][{DateTime.Now:yyyy-MM-dd HH:mm:ss}][PROCESSO {_processId}][SOCKET SERVER] - Comando: {commandType}");
+                    var command = CommandFactory.Create(commandType, receivedString);
                     var response = await _mediator.Send(command);
 
                     var responseSerialized = JsonSerializer.Serialize(response);
